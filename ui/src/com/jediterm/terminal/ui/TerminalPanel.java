@@ -68,6 +68,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
 
   private MouseMode myMouseMode = MouseMode.MOUSE_REPORTING_NONE;
   private Point mySelectionStartPoint = null;
+  //绘制选择
   private TerminalSelection mySelection = null;
 
   private final TerminalCopyPasteHandler myCopyPasteHandler;
@@ -123,7 +124,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
     myTermSize = new TermSize(terminalTextBuffer.getWidth(), terminalTextBuffer.getHeight());
     myMaxFPS = mySettingsProvider.maxRefreshRate();
     myCopyPasteHandler = createCopyPasteHandler();
-
+    setOpaque(false);
     updateScrolling(true);
 
     enableEvents(AWTEvent.KEY_EVENT_MASK | AWTEvent.INPUT_METHOD_EVENT_MASK);
@@ -194,7 +195,6 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
         }
 
         final Point charCoords = panelToCharCoords(e.getPoint());
-
         if (mySelection == null) {
           // prevent unlikely case where drag started outside terminal panel
           if (mySelectionStartPoint == null) {
@@ -798,6 +798,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
               TextStyle foundPatternStyle = getFoundPattern(style);
               for (Pair<Integer, Integer> range : ranges) {
                 CharBuffer foundPatternChars = characters.subBuffer(range);
+                //绘制选择-查询内容
                 drawCharacters(x + range.first, row, foundPatternStyle, foundPatternChars, gfx);
               }
             }
@@ -807,8 +808,13 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
             Pair<Integer, Integer> interval = mySelection.intersect(x, row + myClientScrollOrigin, characters.length());
             if (interval != null) {
               TextStyle selectionStyle = getSelectionStyle(style);
+              //测试选择
+              /*final TextStyle.Builder builder = selectionStyle.toBuilder();
+              builder.setBackground(new TerminalColor(0,255,0,255));
+              builder.setForeground(new TerminalColor(0,0,255,255));
+              final TextStyle build = builder.build();*/
               CharBuffer selectionChars = characters.subBuffer(interval.first - x, interval.second);
-
+              //绘制选择-选择文本
               drawCharacters(interval.first, row, selectionStyle, selectionChars, gfx);
             }
           }
@@ -818,14 +824,21 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
         public void consumeNul(int x, int y, int nulIndex, TextStyle style, CharBuffer characters, int startRow) {
           int row = y - startRow;
           if (mySelection != null) {
+            //绘制选择的内容的空白处理
             // compute intersection with all NUL areas, non-breaking
             Pair<Integer, Integer> interval = mySelection.intersect(nulIndex, row + myClientScrollOrigin, columnCount - nulIndex);
             if (interval != null) {
               TextStyle selectionStyle = getSelectionStyle(style);
+              //测试选择
+              /*final TextStyle.Builder builder = selectionStyle.toBuilder();
+              builder.setBackground(new TerminalColor(0,255,0,255));
+              builder.setForeground(new TerminalColor(0,0,255,255));
+              final TextStyle build = builder.build();*/
               drawCharacters(x, row, selectionStyle, characters, gfx);
               return;
             }
           }
+          //绘制选择-空白空间
           drawCharacters(x, row, style, characters, gfx);
         }
 
@@ -870,8 +883,14 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
     myCachedFoundPatternColor = null;
   }
 
+  /**
+   * 返回选择的样式公开
+   *
+   * @param style
+   * @return
+   */
   @NotNull
-  private TextStyle getSelectionStyle(@NotNull TextStyle style) {
+  public TextStyle getSelectionStyle(@NotNull TextStyle style) {
     if (mySettingsProvider.useInverseSelectionColor()) {
       return getInversedStyle(style);
     }
@@ -1157,6 +1176,13 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
       return computeBlinkingState();
     }
 
+    /**
+     * 绘制光标
+     *
+     * @param c
+     * @param gfx
+     * @param style
+     */
     void drawCursor(String c, Graphics2D gfx, TextStyle style) {
       TerminalCursorState state = computeCursorState();
 
@@ -1267,19 +1293,21 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
       }
     }
 
-    //文字背景色
+    //文字背景色和选择
     java.awt.Color backgroundColor = getPaletteBackground(myStyleState.getBackground(style.getBackgroundForRun()));
     gfx.setColor(backgroundColor);
+
+    //绘制选择
     gfx.fillRect(xCoord, yCoord, width, height);
 
     if (buf.isNul()) {
       return; // nothing more to do
     }
 
+    //文字颜色
     gfx.setColor(getStyleForeground(style));
-
+    //gfx.setColor(new java.awt.Color(255, 0, 0));
     drawChars(x, y, buf, style, gfx);
-
     if (style.hasOption(TextStyle.Option.UNDERLINED)) {
       int baseLine = (y + 1) * myCharSize.height - mySpaceBetweenLines / 2 - myDescent;
       int lineY = baseLine + 3;

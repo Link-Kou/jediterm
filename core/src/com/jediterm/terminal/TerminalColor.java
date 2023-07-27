@@ -26,6 +26,10 @@ public class TerminalColor {
     this(-1, new Color(r, g, b), null);
   }
 
+  public TerminalColor(int r, int g, int b, int a) {
+    this(-1, new Color(r, g, b, a), null);
+  }
+
   public TerminalColor(@NotNull Supplier<Color> colorSupplier) {
     this(-1, null, colorSupplier);
   }

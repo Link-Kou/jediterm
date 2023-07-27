@@ -6,6 +6,7 @@ import com.jediterm.terminal.ui.settings.DefaultSettingsProvider;
 import org.jetbrains.annotations.NotNull;
 
 import javax.swing.*;
+import java.awt.*;
 import java.io.IOException;
 import java.io.PipedReader;
 import java.io.PipedWriter;
@@ -29,7 +30,8 @@ public class BasicTerminalExample {
     try {
       writeTerminalCommands(terminalWriter);
       terminalWriter.close();
-    } catch (IOException e) {
+    }
+    catch (IOException e) {
       e.printStackTrace();
     }
     return widget;
@@ -37,8 +39,13 @@ public class BasicTerminalExample {
 
   private static void createAndShowGUI() {
     JFrame frame = new JFrame("Basic Terminal Example");
+    frame.setLayout(new BorderLayout());
     frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-    frame.setContentPane(createTerminalWidget());
+    BasicJPanel jPanel = new BasicJPanel(new BorderLayout());
+    jPanel.add(createTerminalWidget(), BorderLayout.CENTER);
+    Container contentPane = frame.getContentPane();
+    contentPane.setLayout(new BorderLayout());
+    contentPane.add(jPanel, BorderLayout.CENTER);
     frame.pack();
     frame.setVisible(true);
   }
@@ -54,8 +61,9 @@ public class BasicTerminalExample {
 
     public ExampleTtyConnector(@NotNull PipedWriter writer) {
       try {
-        myReader =  new PipedReader(writer);
-      } catch (IOException e) {
+        myReader = new PipedReader(writer);
+      }
+      catch (IOException e) {
         throw new RuntimeException(e);
       }
     }

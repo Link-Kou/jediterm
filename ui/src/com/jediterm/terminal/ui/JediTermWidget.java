@@ -60,7 +60,7 @@ public class JediTermWidget extends JPanel implements TerminalSession, TerminalW
 
   public JediTermWidget(int columns, int lines, SettingsProvider settingsProvider) {
     super(new BorderLayout());
-
+    setOpaque(false);
     mySettingsProvider = settingsProvider;
 
     StyleState styleState = createDefaultStyle();

@@ -9,12 +9,12 @@ public final class AwtTransformers {
 
   @Contract(value = "null -> null; !null -> new", pure = true)
   public static @Nullable java.awt.Color toAwtColor(@Nullable Color color) {
-    return color == null ? null : new java.awt.Color(color.getRGB(), true);
+    return color == null ? null : new java.awt.Color(color.getRed(), color.getGreen(), color.getBlue(), color.getAlpha());
   }
 
   @Contract("null -> null; !null -> new")
   public static @Nullable Color fromAwtColor(@Nullable java.awt.Color color) {
-    return color == null ? null : new Color(color.getRGB(), true);
+    return color == null ? null : new Color(color.getRed(), color.getGreen(), color.getBlue(), color.getAlpha());
   }
 
   @Contract("null -> null; !null -> new")

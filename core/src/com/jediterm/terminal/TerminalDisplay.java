@@ -2,43 +2,44 @@ package com.jediterm.terminal;
 
 import com.jediterm.core.Color;
 import com.jediterm.core.util.TermSize;
+import com.jediterm.terminal.emulator.mouse.MouseFormat;
 import com.jediterm.terminal.emulator.mouse.MouseMode;
-import com.jediterm.terminal.model.JediTerminal;
+import com.jediterm.terminal.model.TerminalSelection;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public interface TerminalDisplay {
-  // Size information
-  int getRowCount();
-
-  int getColumnCount();
-
   void setCursor(int x, int y);
 
-  void setCursorShape(CursorShape shape);
+  void setCursorShape(@NotNull CursorShape cursorShape);
 
   void beep();
 
-  void requestResize(@NotNull TermSize newWinSize, RequestOrigin origin, int cursorX, int cursorY,
-                     JediTerminal.ResizeHandler resizeHandler);
+  default void onResize(@NotNull TermSize newTermSize, @NotNull RequestOrigin origin) {}
 
   void scrollArea(final int scrollRegionTop, final int scrollRegionSize, int dy);
 
-  void setCursorVisible(boolean shouldDrawCursor);
+  default void historyBufferLineCountChanged() {}
 
-  void setScrollingEnabled(boolean enabled);
+  void setCursorVisible(boolean isCursorVisible);
 
-  void setBlinkingCursor(boolean enabled);
+  void useAlternateScreenBuffer(boolean useAlternateScreenBuffer);
+
+  void setBlinkingCursor(boolean isCursorBlinking);
 
   String getWindowTitle();
 
-  void setWindowTitle(String name);
+  void setWindowTitle(@NotNull String windowTitle);
 
-  void terminalMouseModeSet(MouseMode mode);
+  @Nullable TerminalSelection getSelection();
+
+  void terminalMouseModeSet(@NotNull MouseMode mouseMode);
+
+  void setMouseFormat(@NotNull MouseFormat mouseFormat);
 
   boolean ambiguousCharsAreDoubleWidth();
 
-  default void setBracketedPasteMode(boolean enabled) {}
+  default void setBracketedPasteMode(boolean bracketedPasteModeEnabled) {}
 
   default @Nullable Color getWindowForeground() {
     return null;

@@ -11,6 +11,7 @@ import com.jediterm.terminal.SubstringFinder.FindResult.FindItem;
 import com.jediterm.terminal.TextStyle.Option;
 import com.jediterm.terminal.emulator.ColorPalette;
 import com.jediterm.terminal.emulator.charset.CharacterSets;
+import com.jediterm.terminal.emulator.mouse.MouseFormat;
 import com.jediterm.terminal.emulator.mouse.MouseMode;
 import com.jediterm.terminal.emulator.mouse.TerminalMouseListener;
 import com.jediterm.terminal.model.*;
@@ -68,7 +69,6 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
 
   private MouseMode myMouseMode = MouseMode.MOUSE_REPORTING_NONE;
   private Point mySelectionStartPoint = null;
-  //绘制选择
   private TerminalSelection mySelection = null;
 
   private final TerminalCopyPasteHandler myCopyPasteHandler;
@@ -96,8 +96,9 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
   private String myInputMethodUncommittedChars;
 
   private Timer myRepaintTimer;
-  private AtomicInteger scrollDy = new AtomicInteger(0);
-  private AtomicBoolean needRepaint = new AtomicBoolean(true);
+  private final AtomicInteger scrollDy = new AtomicInteger(0);
+  private final AtomicBoolean myHistoryBufferLineCountChanged = new AtomicBoolean(false);
+  private final AtomicBoolean needRepaint = new AtomicBoolean(true);
 
   private int myMaxFPS = 50;
   private int myBlinkingPeriod = 500;
@@ -124,7 +125,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
     myTermSize = new TermSize(terminalTextBuffer.getWidth(), terminalTextBuffer.getHeight());
     myMaxFPS = mySettingsProvider.maxRefreshRate();
     myCopyPasteHandler = createCopyPasteHandler();
-    setOpaque(false);
+
     updateScrolling(true);
 
     enableEvents(AWTEvent.KEY_EVENT_MASK | AWTEvent.INPUT_METHOD_EVENT_MASK);
@@ -195,6 +196,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
         }
 
         final Point charCoords = panelToCharCoords(e.getPoint());
+
         if (mySelection == null) {
           // prevent unlikely case where drag started outside terminal panel
           if (mySelectionStartPoint == null) {
@@ -255,13 +257,11 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
         HyperlinkStyle hyperlink = isFollowLinkEvent(e) ? findHyperlink(e.getPoint()) : null;
         if (hyperlink != null) {
           hyperlink.getLinkInfo().navigate();
-        }
-        else if (e.getButton() == MouseEvent.BUTTON1 && isLocalMouseAction(e)) {
+        } else if (e.getButton() == MouseEvent.BUTTON1 && isLocalMouseAction(e)) {
           int count = e.getClickCount();
           if (count == 1) {
             // do nothing
-          }
-          else if (count == 2) {
+          } else if (count == 2) {
             // select word
             final Point charCoords = panelToCharCoords(e.getPoint());
             Point start = SelectionUtil.getPreviousSeparator(charCoords, myTerminalTextBuffer);
@@ -272,16 +272,17 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
             if (mySettingsProvider.copyOnSelect()) {
               handleCopyOnSelect();
             }
-          }
-          else if (count == 3) {
+          } else if (count == 3) {
             // select line
             final Point charCoords = panelToCharCoords(e.getPoint());
             int startLine = charCoords.y;
-            while (startLine > -getScrollBuffer().getLineCount() && myTerminalTextBuffer.getLine(startLine - 1).isWrapped()) {
+            while (startLine > -getScrollBuffer().getLineCount()
+                    && myTerminalTextBuffer.getLine(startLine - 1).isWrapped()) {
               startLine--;
             }
             int endLine = charCoords.y;
-            while (endLine < myTerminalTextBuffer.getHeight() && myTerminalTextBuffer.getLine(endLine).isWrapped()) {
+            while (endLine < myTerminalTextBuffer.getHeight()
+                    && myTerminalTextBuffer.getLine(endLine).isWrapped()) {
               endLine++;
             }
             mySelection = new TerminalSelection(new Point(0, startLine));
@@ -291,11 +292,9 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
               handleCopyOnSelect();
             }
           }
-        }
-        else if (e.getButton() == MouseEvent.BUTTON2 && mySettingsProvider.pasteOnMiddleMouseClick() && isLocalMouseAction(e)) {
+        } else if (e.getButton() == MouseEvent.BUTTON2 && mySettingsProvider.pasteOnMiddleMouseClick() && isLocalMouseAction(e)) {
           handlePasteSelection();
-        }
-        else if (e.getButton() == MouseEvent.BUTTON3) {
+        } else if (e.getButton() == MouseEvent.BUTTON3) {
           HyperlinkStyle contextHyperlink = findHyperlink(e.getPoint());
           TerminalActionProvider provider = getTerminalActionProvider(contextHyperlink != null ? contextHyperlink.getLinkInfo() : null, e);
           JPopupMenu popup = createPopupMenu(provider);
@@ -415,7 +414,8 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
   }
 
   private @Nullable HyperlinkStyle findHyperlink(@Nullable Cell cell) {
-    if (cell != null && cell.getColumn() >= 0 && cell.getColumn() < myTerminalTextBuffer.getWidth() && cell.getLine() >= -myTerminalTextBuffer.getHistoryLinesCount() && cell.getLine() <= myTerminalTextBuffer.getHeight()) {
+    if (cell != null && cell.getColumn() >= 0 && cell.getColumn() < myTerminalTextBuffer.getWidth() &&
+      cell.getLine() >= -myTerminalTextBuffer.getHistoryLinesCount() && cell.getLine() <= myTerminalTextBuffer.getHeight()) {
       TextStyle style = myTerminalTextBuffer.getStyleAt(cell.getColumn(), cell.getLine());
       if (style instanceof HyperlinkStyle) {
         return (HyperlinkStyle) style;
@@ -475,7 +475,8 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
   protected @Nullable SubstringFinder.FindResult selectPrevOrNextFindResultItem(boolean next) {
     if (myFindResult != null && !myFindResult.getItems().isEmpty()) {
       FindItem item = next ? myFindResult.nextFindItem() : myFindResult.prevFindItem();
-      mySelection = new TerminalSelection(new Point(item.getStart().x, item.getStart().y - myTerminalTextBuffer.getHistoryLinesCount()), new Point(item.getEnd().x, item.getEnd().y - myTerminalTextBuffer.getHistoryLinesCount()));
+      mySelection = new TerminalSelection(new Point(item.getStart().x, item.getStart().y - myTerminalTextBuffer.getHistoryLinesCount()),
+        new Point(item.getEnd().x, item.getEnd().y - myTerminalTextBuffer.getHistoryLinesCount()));
       if (mySelection.getStart().y < getTerminalTextBuffer().getHeight() / 2) {
         myBoundedRangeModel.setValue(mySelection.getStart().y - getTerminalTextBuffer().getHeight() / 2);
       }
@@ -505,13 +506,11 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
         if (terminalPanel.needRepaint.getAndSet(false)) {
           try {
             terminalPanel.doRepaint();
-          }
-          catch (Exception ex) {
+          } catch (Exception ex) {
             LOG.error("Error while terminal panel redraw", ex);
           }
         }
-      }
-      else { // terminalPanel was garbage collected
+      } else { // terminalPanel was garbage collected
         Timer timer = (Timer) e.getSource();
         timer.removeActionListener(this);
         timer.stop();
@@ -520,9 +519,12 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
   }
 
   @Override
-  public void terminalMouseModeSet(MouseMode mode) {
-    myMouseMode = mode;
+  public void terminalMouseModeSet(@NotNull MouseMode mouseMode) {
+    myMouseMode = mouseMode;
   }
+
+  @Override
+  public void setMouseFormat(@NotNull MouseFormat mouseFormat) {}
 
   private boolean isMouseReporting() {
     return myMouseMode != MouseMode.MOUSE_REPORTING_NONE;
@@ -578,7 +580,9 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
     return new Cell(y, x);
   }
 
-  private void copySelection(@Nullable Point selectionStart, @Nullable Point selectionEnd, boolean useSystemSelectionClipboardIfAvailable) {
+  private void copySelection(@Nullable Point selectionStart,
+                             @Nullable Point selectionEnd,
+                             boolean useSystemSelectionClipboardIfAvailable) {
     if (selectionStart == null || selectionEnd == null) {
       return;
     }
@@ -610,8 +614,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
         text = "\u001b[200~" + text + "\u001b[201~";
       }
       myTerminalStarter.sendString(text, true);
-    }
-    catch (RuntimeException e) {
+    } catch (RuntimeException e) {
       LOG.info("", e);
     }
   }
@@ -622,11 +625,13 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
   }
 
   protected void drawImage(Graphics2D gfx, BufferedImage image, int x, int y, ImageObserver observer) {
-    gfx.drawImage(image, x, y, image.getWidth(), image.getHeight(), observer);
+    gfx.drawImage(image, x, y,
+            image.getWidth(), image.getHeight(), observer);
   }
 
   protected BufferedImage createBufferedImage(int width, int height) {
-    return new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+    return new BufferedImage(width, height,
+            BufferedImage.TYPE_INT_RGB);
   }
 
   public @Nullable TermSize getTerminalSizeFromComponent() {
@@ -663,9 +668,9 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
     myCustomKeyListeners.remove(keyListener);
   }
 
-  public void requestResize(@NotNull TermSize newSize, final RequestOrigin origin, int cursorX, int cursorY, JediTerminal.ResizeHandler resizeHandler) {
-    myTerminalTextBuffer.resize(newSize, origin, cursorX, cursorY, resizeHandler, mySelection);
-    myTermSize = newSize;
+  @Override
+  public void onResize(@NotNull TermSize newTermSize, @NotNull RequestOrigin origin) {
+    myTermSize = newTermSize;
 
     setPreferredSize(new java.awt.Dimension(getPixelWidth(), getPixelHeight()));
     if (myTerminalPanelListener != null) {
@@ -688,15 +693,16 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
 
     myCharSize.width = fo.charWidth('W');
     int fontMetricsHeight = fo.getHeight();
-    myCharSize.height = (int) Math.ceil(fontMetricsHeight * lineSpacing);
+    myCharSize.height = (int)Math.ceil(fontMetricsHeight * lineSpacing);
     mySpaceBetweenLines = Math.max(0, ((myCharSize.height - fontMetricsHeight) / 2) * 2);
     myDescent = fo.getDescent();
     if (LOG.isDebugEnabled()) {
       // The magic +2 here is to give lines a tiny bit of extra height to avoid clipping when rendering some Apple
       // emoji, which are slightly higher than the font metrics reported character height :(
       int oldCharHeight = fontMetricsHeight + (int) (lineSpacing * 2) + 2;
-      int oldDescent = fo.getDescent() + (int) lineSpacing;
-      LOG.debug("charHeight=" + oldCharHeight + "->" + myCharSize.height + ", descent=" + oldDescent + "->" + myDescent);
+      int oldDescent = fo.getDescent() + (int)lineSpacing;
+      LOG.debug("charHeight=" + oldCharHeight + "->" + myCharSize.height +
+        ", descent=" + oldDescent + "->" + myDescent);
     }
 
     myMonospaced = isMonospaced(fo);
@@ -728,8 +734,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
               isMonospaced = false;
               break;
             }
-          }
-          else {
+          } else {
             charWidth = w;
           }
         }
@@ -745,8 +750,10 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
   protected void setupAntialiasing(Graphics graphics) {
     if (graphics instanceof Graphics2D) {
       Graphics2D myGfx = (Graphics2D) graphics;
-      final Object mode = mySettingsProvider.useAntialiasing() ? RenderingHints.VALUE_TEXT_ANTIALIAS_ON : RenderingHints.VALUE_TEXT_ANTIALIAS_OFF;
-      final RenderingHints hints = new RenderingHints(RenderingHints.KEY_TEXT_ANTIALIASING, mode);
+      final Object mode = mySettingsProvider.useAntialiasing() ? RenderingHints.VALUE_TEXT_ANTIALIAS_ON
+              : RenderingHints.VALUE_TEXT_ANTIALIAS_OFF;
+      final RenderingHints hints = new RenderingHints(
+              RenderingHints.KEY_TEXT_ANTIALIASING, mode);
       myGfx.setRenderingHints(hints);
     }
   }
@@ -808,11 +815,6 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
             Pair<Integer, Integer> interval = mySelection.intersect(x, row + myClientScrollOrigin, characters.length());
             if (interval != null) {
               TextStyle selectionStyle = getSelectionStyle(style);
-              //测试选择
-              /*final TextStyle.Builder builder = selectionStyle.toBuilder();
-              builder.setBackground(new TerminalColor(0,255,0,255));
-              builder.setForeground(new TerminalColor(0,0,255,255));
-              final TextStyle build = builder.build();*/
               CharBuffer selectionChars = characters.subBuffer(interval.first - x, interval.second);
               //绘制选择-选择文本
               drawCharacters(interval.first, row, selectionStyle, selectionChars, gfx);
@@ -829,11 +831,6 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
             Pair<Integer, Integer> interval = mySelection.intersect(nulIndex, row + myClientScrollOrigin, columnCount - nulIndex);
             if (interval != null) {
               TextStyle selectionStyle = getSelectionStyle(style);
-              //测试选择
-              /*final TextStyle.Builder builder = selectionStyle.toBuilder();
-              builder.setBackground(new TerminalColor(0,255,0,255));
-              builder.setForeground(new TerminalColor(0,0,255,255));
-              final TextStyle build = builder.build();*/
               drawCharacters(x, row, selectionStyle, characters, gfx);
               return;
             }
@@ -868,8 +865,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
         }
         myCursor.drawCursor(cursorChar, gfx, cursorStyle);
       }
-    }
-    finally {
+    } finally {
       myTerminalTextBuffer.unlock();
     }
     resetColorCache();
@@ -899,7 +895,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
     builder.setBackground(selectionStyle.getBackground());
     builder.setForeground(selectionStyle.getForeground());
     if (builder instanceof HyperlinkStyle.Builder) {
-      return ((HyperlinkStyle.Builder) builder).build(true);
+      return ((HyperlinkStyle.Builder)builder).build(true);
     }
     return builder.build();
   }
@@ -978,8 +974,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
       for (KeyListener keyListener : myCustomKeyListeners) {
         keyListener.keyPressed(e);
       }
-    }
-    else if (id == KeyEvent.KEY_TYPED) {
+    } else if (id == KeyEvent.KEY_TYPED) {
       for (KeyListener keyListener : myCustomKeyListeners) {
         keyListener.keyTyped(e);
       }
@@ -1046,16 +1041,15 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
         Point p = panelToCharCoords(e.getPoint());
         listener.mouseWheelMoved(p.x, p.y, new AwtMouseWheelEvent(e));
       }
-      if (myTerminalTextBuffer.isUsingAlternateBuffer() && mySettingsProvider.sendArrowKeysInAlternativeMode()) {
+      if (myTerminalTextBuffer.isUsingAlternateBuffer() && mySettingsProvider.sendArrowKeysInAlternativeMode()){
         //Send Arrow keys instead
         final byte[] arrowKeys;
         if (e.getWheelRotation() < 0) {
-          arrowKeys = myTerminalStarter.getCode(KeyEvent.VK_UP, 0);
+          arrowKeys = myTerminalStarter.getCode(KeyEvent.VK_UP,0);
+        }else{
+          arrowKeys = myTerminalStarter.getCode(KeyEvent.VK_DOWN,0);
         }
-        else {
-          arrowKeys = myTerminalStarter.getCode(KeyEvent.VK_DOWN, 0);
-        }
-        for (int i = 0; i < Math.abs(e.getUnitsToScroll()); i++) {
+        for(int i = 0; i < Math.abs(e.getUnitsToScroll()); i++){
           myTerminalStarter.sendBytes(arrowKeys);
         }
         e.consume();
@@ -1081,7 +1075,8 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
     });
   }
 
-  @NotNull KeyListener getTerminalKeyListener() {
+  @NotNull
+  KeyListener getTerminalKeyListener() {
     return myTerminalKeyHandler;
   }
 
@@ -1217,8 +1212,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
             gfx.setColor(inverseBg);
             gfx.fillRect(xCoord, yCoord, width, height);
             drawCharacters(x, y, inversedStyle, buf, gfx);
-          }
-          else {
+          } else {
             gfx.setColor(fgColor);
             gfx.drawRect(xCoord, yCoord, width, height);
           }
@@ -1271,7 +1265,8 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
     drawCharacters(x, y, style, buf, gfx, true);
   }
 
-  private void drawCharacters(int x, int y, TextStyle style, CharBuffer buf, Graphics2D gfx, boolean includeSpaceBetweenLines) {
+  private void drawCharacters(int x, int y, TextStyle style, CharBuffer buf, Graphics2D gfx,
+                              boolean includeSpaceBetweenLines) {
     int xCoord = x * myCharSize.width + getInsetX();
     int yCoord = y * myCharSize.height + (includeSpaceBetweenLines ? 0 : mySpaceBetweenLines / 2);
 
@@ -1306,8 +1301,9 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
 
     //文字颜色
     gfx.setColor(getStyleForeground(style));
-    //gfx.setColor(new java.awt.Color(255, 0, 0));
+
     drawChars(x, y, buf, style, gfx);
+
     if (style.hasOption(TextStyle.Option.UNDERLINED)) {
       int baseLine = (y + 1) * myCharSize.height - mySpaceBetweenLines / 2 - myDescent;
       int lineY = baseLine + 3;
@@ -1329,8 +1325,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
     CharBuffer renderingBuffer;
     if (mySettingsProvider.DECCompatibilityMode() && style.hasOption(TextStyle.Option.BOLD)) {
       renderingBuffer = CharUtils.heavyDecCompatibleBuffer(buf);
-    }
-    else {
+    } else {
       renderingBuffer = buf;
     }
 
@@ -1422,7 +1417,9 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
       // From CMap#getFormatCharGlyph
       if (charCode >= 0x200c) {
         //noinspection RedundantIfStatement
-        if ((charCode <= 0x200f) || (charCode >= 0x2028 && charCode <= 0x202e) || (charCode >= 0x206a && charCode <= 0x206f)) {
+        if ((charCode <= 0x200f) ||
+          (charCode >= 0x2028 && charCode <= 0x202e) ||
+          (charCode >= 0x206a && charCode <= 0x206f)) {
           return true;
         }
       }
@@ -1434,7 +1431,10 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
     java.awt.Color foreground = getPaletteForeground(myStyleState.getForeground(style.getForegroundForRun()));
     if (style.hasOption(Option.DIM)) {
       java.awt.Color background = getPaletteBackground(myStyleState.getBackground(style.getBackgroundForRun()));
-      foreground = new java.awt.Color((foreground.getRed() + background.getRed()) / 2, (foreground.getGreen() + background.getGreen()) / 2, (foreground.getBlue() + background.getBlue()) / 2, foreground.getAlpha());
+      foreground = new java.awt.Color((foreground.getRed() + background.getRed()) / 2,
+                             (foreground.getGreen() + background.getGreen()) / 2,
+                             (foreground.getBlue() + background.getBlue()) / 2,
+                             foreground.getAlpha());
     }
     return foreground;
   }
@@ -1446,7 +1446,8 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
     if (bold && mySettingsProvider.DECCompatibilityMode() && CharacterSets.isDecBoxChar(text[start])) {
       return myNormalFont;
     }
-    return bold ? (italic ? myBoldItalicFont : myBoldFont) : (italic ? myItalicFont : myNormalFont);
+    return bold ? (italic ? myBoldItalicFont : myBoldFont)
+            : (italic ? myItalicFont : myNormalFont);
   }
 
   private ColorPalette getPalette() {
@@ -1465,6 +1466,11 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
     mySelection = null;
   }
 
+  @Override
+  public void historyBufferLineCountChanged() {
+    myHistoryBufferLineCountChanged.set(true);
+  }
+
   // should be called on EDT
   public void scrollToShowAllOutput() {
     myTerminalTextBuffer.lock();
@@ -1472,7 +1478,8 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
       int historyLines = myTerminalTextBuffer.getHistoryLinesCount();
       if (historyLines > 0) {
         int termHeight = myTermSize.getRows();
-        myBoundedRangeModel.setRangeProperties(-historyLines, historyLines + termHeight, -historyLines, termHeight, false);
+        myBoundedRangeModel.setRangeProperties(-historyLines, historyLines + termHeight, -historyLines,
+            termHeight, false);
         TerminalModelListener modelListener = new TerminalModelListener() {
           @Override
           public void modelChanged() {
@@ -1482,9 +1489,9 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
               SwingUtilities.invokeLater(() -> {
                 myTerminalTextBuffer.lock();
                 try {
-                  myBoundedRangeModel.setRangeProperties(0, myTermSize.getRows(), -myTerminalTextBuffer.getHistoryLinesCount(), myTermSize.getRows(), false);
-                }
-                finally {
+                  myBoundedRangeModel.setRangeProperties(0, myTermSize.getRows(),
+                      -myTerminalTextBuffer.getHistoryLinesCount(), myTermSize.getRows(), false);
+                } finally {
                   myTerminalTextBuffer.unlock();
                 }
               });
@@ -1500,29 +1507,32 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
           }
         });
       }
-    }
-    finally {
+    } finally {
       myTerminalTextBuffer.unlock();
     }
   }
 
   private void updateScrolling(boolean forceUpdate) {
     int dy = scrollDy.getAndSet(0);
-    if (dy == 0 && !forceUpdate) {
+    boolean historyBufferLineCountChanged = myHistoryBufferLineCountChanged.getAndSet(false);
+    if (dy == 0 && !forceUpdate && !historyBufferLineCountChanged) {
       return;
     }
     if (myScrollingEnabled) {
       int value = myBoundedRangeModel.getValue();
       int historyLineCount = myTerminalTextBuffer.getHistoryLinesCount();
       if (value == 0) {
-        myBoundedRangeModel.setRangeProperties(0, myTermSize.getRows(), -historyLineCount, myTermSize.getRows(), false);
-      }
-      else {
+        myBoundedRangeModel
+                .setRangeProperties(0, myTermSize.getRows(), -historyLineCount, myTermSize.getRows(), false);
+      } else {
         // if scrolled to a specific area, update scroll to keep showing this area
-        myBoundedRangeModel.setRangeProperties(Math.min(Math.max(value + dy, -historyLineCount), myTermSize.getRows()), myTermSize.getRows(), -historyLineCount, myTermSize.getRows(), false);
+        myBoundedRangeModel.setRangeProperties(
+                Math.min(Math.max(value + dy, -historyLineCount), myTermSize.getRows()),
+                myTermSize.getRows(),
+                -historyLineCount,
+                myTermSize.getRows(), false);
       }
-    }
-    else {
+    } else {
       myBoundedRangeModel.setRangeProperties(0, myTermSize.getRows(), 0, myTermSize.getRows(), false);
     }
   }
@@ -1533,18 +1543,18 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
   }
 
   @Override
-  public void setCursorShape(CursorShape shape) {
-    myCursor.setShape(shape);
-    switch (shape) {
+  public void setCursorShape(@NotNull CursorShape cursorShape) {
+    myCursor.setShape(cursorShape);
+    switch (cursorShape) {
       case STEADY_BLOCK:
       case STEADY_UNDERLINE:
       case STEADY_VERTICAL_BAR:
-        myCursor.myBlinking = false;
+        myCursor.setBlinking(false);
         break;
       case BLINK_BLOCK:
       case BLINK_UNDERLINE:
       case BLINK_VERTICAL_BAR:
-        myCursor.myBlinking = true;
+        myCursor.setBlinking(true);
         break;
     }
   }
@@ -1565,7 +1575,8 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
   }
 
   private @NotNull Rectangle getBounds(@NotNull LineCellInterval cellInterval) {
-    java.awt.Point topLeft = new java.awt.Point(cellInterval.getStartColumn() * myCharSize.width + getInsetX(), cellInterval.getLine() * myCharSize.height);
+    java.awt.Point topLeft = new java.awt.Point(cellInterval.getStartColumn() * myCharSize.width + getInsetX(),
+      cellInterval.getLine() * myCharSize.height);
     return new Rectangle(topLeft, new java.awt.Dimension(myCharSize.width * cellInterval.getCellCount(), myCharSize.height));
   }
 
@@ -1585,6 +1596,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
     return myTerminalTextBuffer;
   }
 
+  @Override
   public @Nullable TerminalSelection getSelection() {
     return mySelection;
   }
@@ -1595,8 +1607,8 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
   }
 
   @Override
-  public void setBracketedPasteMode(boolean enabled) {
-    myBracketedPasteMode = enabled;
+  public void setBracketedPasteMode(boolean bracketedPasteModeEnabled) {
+    myBracketedPasteMode = bracketedPasteModeEnabled;
   }
 
   public LinesBuffer getScrollBuffer() {
@@ -1604,8 +1616,8 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
   }
 
   @Override
-  public void setCursorVisible(boolean shouldDrawCursor) {
-    myCursor.setShouldDrawCursor(shouldDrawCursor);
+  public void setCursorVisible(boolean isCursorVisible) {
+    myCursor.setShouldDrawCursor(isCursorVisible);
   }
 
   protected @NotNull JPopupMenu createPopupMenu(@NotNull TerminalActionProvider actionProvider) {
@@ -1636,15 +1648,15 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
     return this;
   }
 
-  public void setScrollingEnabled(boolean scrollingEnabled) {
-    myScrollingEnabled = scrollingEnabled;
+  @Override
+  public void useAlternateScreenBuffer(boolean useAlternateScreenBuffer) {
+    myScrollingEnabled = !useAlternateScreenBuffer;
     SwingUtilities.invokeLater(() -> {
       updateScrolling(true);
       if (myUsingAlternateBuffer != myTerminalTextBuffer.isUsingAlternateBuffer()) {
         myUsingAlternateBuffer = myTerminalTextBuffer.isUsingAlternateBuffer();
         if (mySettingsProvider.shouldDisableLineSpacingForAlternateScreenBuffer()) {
-          Timer timer = new Timer(10, e -> {
-          });
+          Timer timer = new Timer(10, e -> {});
           timer.addActionListener(e -> {
             reinitFontAndResize();
             timer.stop();
@@ -1656,12 +1668,8 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
   }
 
   @Override
-  public void setBlinkingCursor(boolean enabled) {
-    myCursor.setBlinking(enabled);
-  }
-
-  public TerminalCursor getTerminalCursor() {
-    return myCursor;
+  public void setBlinkingCursor(boolean isCursorBlinking) {
+    myCursor.setBlinking(isCursorBlinking);
   }
 
   public TerminalOutputStream getTerminalOutputStream() {
@@ -1669,8 +1677,8 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
   }
 
   @Override
-  public void setWindowTitle(String name) {
-    myWindowTitle = name;
+  public void setWindowTitle(@NotNull String windowTitle) {
+    myWindowTitle = windowTitle;
     if (myTerminalPanelListener != null) {
       myTerminalPanelListener.onTitleChanged(myWindowTitle);
     }
@@ -1678,39 +1686,49 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
 
   @Override
   public List<TerminalAction> getActions() {
-    return List.of(new TerminalAction(mySettingsProvider.getOpenUrlActionPresentation(), input -> {
-      return openSelectionAsURL();
-    }).withEnabledSupplier(this::selectionTextIsUrl), new TerminalAction(mySettingsProvider.getCopyActionPresentation(), this::handleCopy) {
-      @Override
-      public boolean isEnabled(@Nullable KeyEvent e) {
-        return e != null || mySelection != null;
-      }
-    }.withMnemonicKey(KeyEvent.VK_C), new TerminalAction(mySettingsProvider.getPasteActionPresentation(), input -> {
-      handlePaste();
-      return true;
-    }).withMnemonicKey(KeyEvent.VK_P).withEnabledSupplier(() -> getClipboardString() != null), new TerminalAction(mySettingsProvider.getSelectAllActionPresentation(), input -> {
-      selectAll();
-      return true;
-    }), new TerminalAction(mySettingsProvider.getClearBufferActionPresentation(), input -> {
-      clearBuffer();
-      return true;
-    }).withMnemonicKey(KeyEvent.VK_K).withEnabledSupplier(() -> !myTerminalTextBuffer.isUsingAlternateBuffer()).separatorBefore(true), new TerminalAction(mySettingsProvider.getPageUpActionPresentation(), input -> {
-      pageUp();
-      return true;
-    }).withEnabledSupplier(() -> !myTerminalTextBuffer.isUsingAlternateBuffer()).separatorBefore(true), new TerminalAction(mySettingsProvider.getPageDownActionPresentation(), input -> {
-      pageDown();
-      return true;
-    }).withEnabledSupplier(() -> !myTerminalTextBuffer.isUsingAlternateBuffer()), new TerminalAction(mySettingsProvider.getLineUpActionPresentation(), input -> {
-      scrollUp();
-      return true;
-    }).withEnabledSupplier(() -> !myTerminalTextBuffer.isUsingAlternateBuffer()).separatorBefore(true), new TerminalAction(mySettingsProvider.getLineDownActionPresentation(), input -> {
-      scrollDown();
-      return true;
-    }));
+    return List.of(
+            new TerminalAction(mySettingsProvider.getOpenUrlActionPresentation(), input -> {
+              return openSelectionAsURL();
+            }).withEnabledSupplier(this::selectionTextIsUrl),
+            new TerminalAction(mySettingsProvider.getCopyActionPresentation(), this::handleCopy) {
+              @Override
+              public boolean isEnabled(@Nullable KeyEvent e) {
+                return e != null || mySelection != null;
+              }
+            }.withMnemonicKey(KeyEvent.VK_C),
+            new TerminalAction(mySettingsProvider.getPasteActionPresentation(), input -> {
+              handlePaste();
+              return true;
+            }).withMnemonicKey(KeyEvent.VK_P).withEnabledSupplier(() -> getClipboardString() != null),
+            new TerminalAction(mySettingsProvider.getSelectAllActionPresentation(), input -> {
+              selectAll();
+              return true;
+            }),
+            new TerminalAction(mySettingsProvider.getClearBufferActionPresentation(), input -> {
+              clearBuffer();
+              return true;
+            }).withMnemonicKey(KeyEvent.VK_K).withEnabledSupplier(() -> !myTerminalTextBuffer.isUsingAlternateBuffer()).separatorBefore(true),
+            new TerminalAction(mySettingsProvider.getPageUpActionPresentation(), input -> {
+              pageUp();
+              return true;
+            }).withEnabledSupplier(() -> !myTerminalTextBuffer.isUsingAlternateBuffer()).separatorBefore(true),
+            new TerminalAction(mySettingsProvider.getPageDownActionPresentation(), input -> {
+              pageDown();
+              return true;
+            }).withEnabledSupplier(() -> !myTerminalTextBuffer.isUsingAlternateBuffer()),
+            new TerminalAction(mySettingsProvider.getLineUpActionPresentation(), input -> {
+              scrollUp();
+              return true;
+            }).withEnabledSupplier(() -> !myTerminalTextBuffer.isUsingAlternateBuffer()).separatorBefore(true),
+            new TerminalAction(mySettingsProvider.getLineDownActionPresentation(), input -> {
+              scrollDown();
+              return true;
+            }));
   }
 
   public void selectAll() {
-    mySelection = new TerminalSelection(new Point(0, -myTerminalTextBuffer.getHistoryLinesCount()), new Point(myTermSize.getColumns(), myTerminalTextBuffer.getScreenLinesCount()));
+    mySelection = new TerminalSelection(new Point(0, -myTerminalTextBuffer.getHistoryLinesCount()),
+      new Point(myTermSize.getColumns(), myTerminalTextBuffer.getScreenLinesCount()));
   }
 
   @NotNull
@@ -1722,8 +1740,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
         //noinspection ResultOfMethodCallIgnored
         uri.toURL();
         return true;
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
         //pass
       }
     }
@@ -1736,7 +1753,8 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
       Pair<Point, Point> points = mySelection.pointsForRun(myTermSize.getColumns());
 
       if (points.first != null || points.second != null) {
-        return SelectionUtil.getSelectionText(points.first, points.second, myTerminalTextBuffer);
+        return SelectionUtil
+                .getSelectionText(points.first, points.second, myTerminalTextBuffer);
 
       }
     }
@@ -1752,8 +1770,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
         if (selectionText != null) {
           Desktop.getDesktop().browse(new URI(selectionText));
         }
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
         //ok then
       }
     }
@@ -1776,14 +1793,14 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
         if (keepLastLine) {
           if (myCoordsAccessor.getY() > 0) {
             TerminalLine lastLine = myTerminalTextBuffer.getLine(myCoordsAccessor.getY() - 1);
-            myTerminalTextBuffer.clearAll();
+            myTerminalTextBuffer.clearScreenBuffer();
             myCoordsAccessor.setY(0);
             myCursor.setY(1);
             myTerminalTextBuffer.addLine(lastLine);
           }
         }
         else {
-          myTerminalTextBuffer.clearAll();
+          myTerminalTextBuffer.clearScreenBuffer();
           myCoordsAccessor.setX(0);
           myCoordsAccessor.setY(1);
           myCursor.setX(0);
@@ -1864,7 +1881,10 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
 
   private static boolean isAltPressedOnly(@NotNull KeyEvent e) {
     int modifiersEx = e.getModifiersEx();
-    return (modifiersEx & InputEvent.ALT_DOWN_MASK) != 0 && (modifiersEx & InputEvent.ALT_GRAPH_DOWN_MASK) == 0 && (modifiersEx & InputEvent.CTRL_DOWN_MASK) == 0 && (modifiersEx & InputEvent.SHIFT_DOWN_MASK) == 0;
+    return (modifiersEx & InputEvent.ALT_DOWN_MASK) != 0 &&
+            (modifiersEx & InputEvent.ALT_GRAPH_DOWN_MASK) == 0 &&
+            (modifiersEx & InputEvent.CTRL_DOWN_MASK) == 0 &&
+            (modifiersEx & InputEvent.SHIFT_DOWN_MASK) == 0;
   }
 
   private boolean processCharacter(@NotNull KeyEvent e) {
@@ -1889,7 +1909,18 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
   }
 
   private static boolean isCodeThatScrolls(int keycode) {
-    return keycode == KeyEvent.VK_UP || keycode == KeyEvent.VK_DOWN || keycode == KeyEvent.VK_LEFT || keycode == KeyEvent.VK_RIGHT || keycode == KeyEvent.VK_BACK_SPACE || keycode == KeyEvent.VK_INSERT || keycode == KeyEvent.VK_DELETE || keycode == KeyEvent.VK_ENTER || keycode == KeyEvent.VK_HOME || keycode == KeyEvent.VK_END || keycode == KeyEvent.VK_PAGE_UP || keycode == KeyEvent.VK_PAGE_DOWN;
+    return keycode == KeyEvent.VK_UP
+            || keycode == KeyEvent.VK_DOWN
+            || keycode == KeyEvent.VK_LEFT
+            || keycode == KeyEvent.VK_RIGHT
+            || keycode == KeyEvent.VK_BACK_SPACE
+            || keycode == KeyEvent.VK_INSERT
+            || keycode == KeyEvent.VK_DELETE
+            || keycode == KeyEvent.VK_ENTER
+            || keycode == KeyEvent.VK_HOME
+            || keycode == KeyEvent.VK_END
+            || keycode == KeyEvent.VK_PAGE_UP
+            || keycode == KeyEvent.VK_PAGE_DOWN;
   }
 
   private boolean processTerminalKeyTyped(KeyEvent e) {
@@ -1946,8 +1977,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
 
   /**
    * Copies selected text to clipboard.
-   *
-   * @param unselect                               true to unselect currently selected text
+   * @param unselect true to unselect currently selected text
    * @param useSystemSelectionClipboardIfAvailable true to use {@link Toolkit#getSystemSelection()} if available
    */
   private void handleCopy(boolean unselect, boolean useSystemSelectionClipboardIfAvailable) {
@@ -1997,8 +2027,7 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
           myTerminalStarter.sendString(sb.toString(), true);
         }
       }
-    }
-    else {
+    } else {
       myInputMethodUncommittedChars = uncommittedChars(e.getText());
     }
   }
@@ -2027,7 +2056,8 @@ public class TerminalPanel extends JComponent implements TerminalDisplay, Termin
   private class MyInputMethodRequests implements InputMethodRequests {
     @Override
     public Rectangle getTextLocation(TextHitInfo offset) {
-      Rectangle r = new Rectangle(myCursor.getCoordX() * myCharSize.width + getInsetX(), (myCursor.getCoordY() + 1) * myCharSize.height, 0, 0);
+      Rectangle r = new Rectangle(myCursor.getCoordX() * myCharSize.width + getInsetX(), (myCursor.getCoordY() + 1) * myCharSize.height,
+              0, 0);
       java.awt.Point p = TerminalPanel.this.getLocationOnScreen();
       r.translate(p.x, p.y);
       return r;

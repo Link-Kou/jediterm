@@ -4,14 +4,15 @@ import com.jediterm.core.typeahead.TerminalTypeAheadManager;
 import com.jediterm.core.util.TermSize;
 import com.jediterm.terminal.emulator.Emulator;
 import com.jediterm.terminal.emulator.JediEmulator;
+import com.jediterm.terminal.model.JediTerminal;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InterruptedIOException;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 
@@ -26,15 +27,16 @@ public class TerminalStarter implements TerminalOutputStream {
 
   private final Emulator myEmulator;
 
-  private final Terminal myTerminal;
+  private final JediTerminal myTerminal;
 
   private final TtyConnector myTtyConnector;
 
   private final TerminalTypeAheadManager myTypeAheadManager;
   private final ScheduledExecutorService mySingleThreadScheduledExecutor;
   private volatile boolean myStopped = false;
+  private volatile ScheduledFuture<?> myScheduledTtyConnectorResizeFuture;
 
-  public TerminalStarter(@NotNull Terminal terminal,
+  public TerminalStarter(@NotNull JediTerminal terminal,
                          @NotNull TtyConnector ttyConnector,
                          @NotNull TerminalDataStream dataStream,
                          @NotNull TerminalTypeAheadManager typeAheadManager,
@@ -71,15 +73,16 @@ public class TerminalStarter implements TerminalOutputStream {
         myEmulator.next();
       }
     }
-    catch (final InterruptedIOException e) {
-      LOG.info("Terminal exiting");
+    catch (InterruptedIOException e) {
+      LOG.debug("Terminal I/0 has been interrupted");
     }
-    catch (final Exception e) {
-      if (!myTtyConnector.isConnected()) {
-        myTerminal.disconnected();
-        return;
+    catch (Exception e) {
+      if (myTtyConnector.isConnected()) {
+        throw new RuntimeException("Uncaught exception in terminal emulator thread", e);
       }
-      LOG.error("Caught exception in terminal thread", e);
+    }
+    finally {
+      myTerminal.disconnected();
     }
   }
 
@@ -110,23 +113,46 @@ public class TerminalStarter implements TerminalOutputStream {
 
   public void postResize(@NotNull TermSize termSize, @NotNull RequestOrigin origin) {
     execute(() -> {
-      resize(myEmulator, myTerminal, myTtyConnector, termSize, origin, (millisDelay, runnable) -> {
-        mySingleThreadScheduledExecutor.schedule(runnable, millisDelay, TimeUnit.MILLISECONDS);
-      });
+      myTerminal.resize(termSize, origin);
+      scheduleTtyConnectorResize(termSize);
     });
   }
 
   /**
+   * Schedule sending a resize to a process. When using primary screen buffer + scroll-back buffer,
+   * resize shouldn't be sent to the process immediately to reduce probability of concurrent resizes.
+   * Because sending resize to the process may lead to full screen buffer update,
+   * e.g. it happens with ConPTY. The update should be applied to the screen buffer having
+   * the exact same size as it had when resize was posted. Otherwise, some lines from the screen buffer
+   * could escape to the scroll-back buffer and stuck there.
+   */
+  private void scheduleTtyConnectorResize(@NotNull TermSize termSize) {
+    ScheduledFuture<?> scheduledTtyConnectorResizeFuture = myScheduledTtyConnectorResizeFuture;
+    if (scheduledTtyConnectorResizeFuture != null) {
+      scheduledTtyConnectorResizeFuture.cancel(false);
+    }
+    long mergeDelay = myTerminal.getTerminalTextBuffer().isUsingAlternateBuffer() ?
+            100 /* not necessary, but let's avoid unnecessary work in case of a series of resize events */ :
+            500 /* hopefully, the process will send the screen buffer update within the delay */;
+    //noinspection CodeBlock2Expr
+    myScheduledTtyConnectorResizeFuture = mySingleThreadScheduledExecutor.schedule(() -> {
+      myTtyConnector.resize(termSize);
+    }, mergeDelay, TimeUnit.MILLISECONDS);
+  }
+
+  /**
+   * @deprecated use {@link Terminal#resize(TermSize, RequestOrigin)} and {@link TtyConnector#resize(TermSize)} independently.
    * Resizes terminal and tty connector, should be called on a pooled thread.
    */
+  @SuppressWarnings("unused")
+  @Deprecated(forRemoval = true)
   public static void resize(@NotNull Emulator emulator,
                             @NotNull Terminal terminal,
                             @NotNull TtyConnector ttyConnector,
                             @NotNull TermSize newTermSize,
                             @NotNull RequestOrigin origin,
                             @NotNull BiConsumer<Long, Runnable> taskScheduler) {
-    CompletableFuture<?> promptUpdated = ((JediEmulator)emulator).getPromptUpdatedAfterResizeFuture(taskScheduler);
-    terminal.resize(newTermSize, origin, promptUpdated);
+    terminal.resize(newTermSize, origin);
     ttyConnector.resize(newTermSize);
   }
 

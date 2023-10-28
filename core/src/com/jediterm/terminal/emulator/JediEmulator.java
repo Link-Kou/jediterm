@@ -13,10 +13,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.function.BiConsumer;
 
 /**
  * The main terminal emulator class.
@@ -33,7 +29,6 @@ public class JediEmulator extends DataStreamIteratingEmulator {
   private static int logThrottlerCounter = 0;
   private static int logThrottlerRatio = 100;
   private static int logThrottlerLimit = logThrottlerRatio;
-  private final BlockingQueue<CompletableFuture<Void>> myResizeFutureQueue = new LinkedBlockingQueue<>();
 
   public JediEmulator(TerminalDataStream dataStream, Terminal terminal) {
     super(dataStream, terminal);
@@ -95,9 +90,6 @@ public class JediEmulator extends DataStreamIteratingEmulator {
           terminal.writeCharacters(nonControlCharacters);
         }
         break;
-    }
-    if (myDataStream.isEmpty()) {
-      completeResize();
     }
   }
 
@@ -164,8 +156,8 @@ public class JediEmulator extends DataStreamIteratingEmulator {
       case 'F': //Cursor to lower left corner of the screen
         terminal.cursorPosition(1, terminal.getTerminalHeight());
         break;
-      case 'c': //Full Reset (RIS)
-        terminal.reset();
+      case 'c': // RIS (Reset to Initial State) https://vt100.net/docs/vt510-rm/RIS.html
+        terminal.reset(true);
         break;
       case 'n': //Invoke the G2 Character Set as GL - locking shift 2 (LS2)
         myTerminal.mapCharsetToGL(2);
@@ -212,13 +204,12 @@ public class JediEmulator extends DataStreamIteratingEmulator {
   }
 
   private boolean operatingSystemCommand(SystemCommandSequence args) {
+    // https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-Operating-System-Commands
     int ps = args.getIntAt(0, -1);
-
     switch (ps) {
       case 0: // Icon name / Window Title
       case 1: // Icon name
       case 2: // Window Title
-        // https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-Operating-System-Commands
         String name = args.getStringAt(1);
         if (name != null) {
           myTerminal.setWindowTitle(name);
@@ -244,6 +235,11 @@ public class JediEmulator extends DataStreamIteratingEmulator {
       case 10:
       case 11:
         return processColorQuery(args);
+      case 104:
+        // `Ps = 104 ; c` (Reset Color Number c).
+        // Let's support resetting to avoid warnings.
+        // As there is no support for `Ps = 4 ; c ; spec` (Change Color Number c to the color specified by spec),
+        // resetting is just no operation.
       case 1341:
         List<String> argList = args.getArgs();
         myTerminal.processCustomCommand(argList.subList(1, argList.size()));
@@ -464,6 +460,13 @@ public class JediEmulator extends DataStreamIteratingEmulator {
         return characterAttributes(args); //Character Attributes (SGR)
       case 'n':
         return deviceStatusReport(args); //DSR
+      case 'p':
+        if (args.startsWithExclamationMark()) {
+          // DECSTR (Soft Terminal Reset) https://vt100.net/docs/vt510-rm/DECSTR.html
+          myTerminal.reset(false);
+          return true;
+        }
+        return false;
       case 'q':
         return cursorShape(args); //DECSCUSR
       case 'r':
@@ -797,16 +800,11 @@ public class JediEmulator extends DataStreamIteratingEmulator {
   }
 
   private boolean eraseInDisplay(ControlSequence args) {
-    // ESC [ Ps J
-    final int arg = args.getArg(0, 0);
-
     if (args.startsWithQuestionMark()) {
-      //TODO: support ESC [ ? Ps J - Selective Erase (DECSED)
+      // Selective Erase (DECSED) is not supported
       return false;
     }
-
-    myTerminal.eraseInDisplay(arg);
-
+    myTerminal.eraseInDisplay(args.getArg(0, 0));
     return true;
   }
 
@@ -1086,19 +1084,5 @@ public class JediEmulator extends DataStreamIteratingEmulator {
 
   public void setMouseMode(MouseMode mouseMode) {
     myTerminal.setMouseMode(mouseMode);
-  }
-
-  public @NotNull CompletableFuture<?> getPromptUpdatedAfterResizeFuture(@NotNull BiConsumer<Long, Runnable> taskScheduler) {
-    CompletableFuture<Void> resizeFuture = new CompletableFuture<>();
-    taskScheduler.accept(100L, this::completeResize);
-    myResizeFutureQueue.add(resizeFuture);
-    return resizeFuture;
-  }
-
-  private void completeResize() {
-    CompletableFuture<Void> resizeFuture;
-    while ((resizeFuture = myResizeFutureQueue.poll()) != null) {
-      resizeFuture.complete(null);
-    }
   }
 }

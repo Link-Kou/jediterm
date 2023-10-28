@@ -25,12 +25,12 @@ class ChangeWidthOperation {
     myNewHeight = newHeight;
   }
 
-  void addPointToTrack(@NotNull Point point) {
-    myTrackingPoints.put(new TrackingPoint(point, false), null);
-  }
-
- void addPointToTrack(@NotNull Point point, boolean isForceVisible) {
-    myTrackingPoints.put(new TrackingPoint(point, isForceVisible), null);
+  void addPointToTrack(@NotNull Point point, boolean isForceVisible) {
+   if (isForceVisible && (point.y < 0 || point.y >= myTextBuffer.getHeight())) {
+     LOG.warn("Registered visible point " + point + " is outside screen: [0, " + (myTextBuffer.getHeight() - 1) + "]");
+     point.y = Math.min(Math.max(point.y, 0), myTextBuffer.getHeight() - 1);
+   }
+   myTrackingPoints.put(new TrackingPoint(point, isForceVisible), null);
   }
 
   @NotNull
@@ -90,7 +90,8 @@ class ChangeWidthOperation {
     int bottomMostPointY = 0;
     for (Map.Entry<TrackingPoint, Point> entry : myTrackingPoints.entrySet()) {
       if (entry.getKey().getForceVisible()) {
-        bottomMostPointY = Math.max(bottomMostPointY, entry.getValue().y);
+        Point resultPoint = Objects.requireNonNull(entry.getValue());
+        bottomMostPointY = Math.max(bottomMostPointY, resultPoint.y);
       }
     }
 
@@ -116,11 +117,11 @@ class ChangeWidthOperation {
   }
 
   private int getEmptyBottomLineCount() {
-    int result = 0;
-    while (result < myAllLines.size() && myAllLines.get(myAllLines.size() - result - 1).isNul()) {
-      result++;
+    int ind = myAllLines.size() - 1;
+    while (ind >= 0 && myAllLines.get(ind).isNulOrEmpty()) {
+      ind--;
     }
-    return result;
+    return myAllLines.size() - 1 - ind;
   }
 
   @NotNull

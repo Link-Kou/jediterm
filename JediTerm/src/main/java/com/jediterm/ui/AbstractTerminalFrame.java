@@ -2,14 +2,13 @@ package com.jediterm.ui;
 
 import com.jediterm.app.JediTerm;
 import com.jediterm.core.compatibility.Point;
-import com.jediterm.terminal.RequestOrigin;
+import com.jediterm.terminal.Terminal;
 import com.jediterm.terminal.TtyConnector;
-import com.jediterm.terminal.debug.BufferPanel;
+import com.jediterm.ui.debug.TerminalDebugView;
 import com.jediterm.terminal.model.SelectionUtil;
 import com.jediterm.terminal.model.TerminalSelection;
 import com.jediterm.terminal.ui.JediTermWidget;
 import com.jediterm.terminal.ui.TerminalPanel;
-import com.jediterm.terminal.ui.TerminalPanelListener;
 import com.jediterm.terminal.ui.TerminalWidget;
 import com.jediterm.terminal.ui.settings.DefaultTabbedSettingsProvider;
 import com.jediterm.terminal.ui.settings.TabbedSettingsProvider;
@@ -21,9 +20,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.WindowAdapter;
-import java.awt.event.WindowEvent;
+import java.awt.event.*;
 import java.util.logging.Level;
 
 public abstract class AbstractTerminalFrame {
@@ -47,17 +44,18 @@ public abstract class AbstractTerminalFrame {
 
   private final AbstractAction myDumpDimension = new AbstractAction("Dump terminal dimension") {
     public void actionPerformed(final ActionEvent e) {
-      LOG.info(myTerminal.getTerminalDisplay().getColumnCount() +
-        "x" + myTerminal.getTerminalDisplay().getRowCount());
+      Terminal terminal = myTerminal.getCurrentSession().getTerminal();
+      LOG.info(terminal.getTerminalWidth() + "x" + terminal.getTerminalHeight());
     }
   };
 
   private final AbstractAction myDumpSelection = new AbstractAction("Dump selection") {
     public void actionPerformed(final ActionEvent e) {
-      TerminalPanel terminalPanel = myTerminal.getCurrentSession().getTerminalPanel();
+      JediTermWidget widget = myTerminal.getCurrentSession();
+      TerminalPanel terminalPanel = widget.getTerminalPanel();
       TerminalSelection selection = terminalPanel.getSelection();
       if (selection != null) {
-        Pair<Point, Point> points = selection.pointsForRun(terminalPanel.getColumnCount());
+        Pair<Point, Point> points = selection.pointsForRun(widget.getTerminal().getTerminalWidth());
         LOG.info(selection + " : '"
           + SelectionUtil.getSelectionText(points.first, points.second, terminalPanel.getTerminalTextBuffer()) + "'");
       }
@@ -175,19 +173,7 @@ public abstract class AbstractTerminalFrame {
     frame.setResizable(true);
 
     tabbedTerminalWidget.addTabListener(new MyTabListener<>());
-    myTerminal.setTerminalPanelListener(new TerminalPanelListener() {
-      public void onPanelResize(@NotNull RequestOrigin origin) {
-        if (origin == RequestOrigin.Remote) {
-          sizeFrameForTerm(frame);
-        }
-        frame.pack();
-      }
-
-      @Override
-      public void onTitleChanged(String title) {
-        frame.setTitle(title);
-      }
-    });
+    myTerminal.setTerminalTitleListener(frame::setTitle);
 
     openSession(myTerminal);
   }
@@ -222,19 +208,30 @@ public abstract class AbstractTerminalFrame {
       return;
     }
     myBufferFrame = new JFrame("buffers");
-    final JPanel panel = new BufferPanel(myTerminal.getCurrentSession());
-
-    myBufferFrame.getContentPane().add(panel);
+    TerminalDebugView debugView = new TerminalDebugView(myTerminal.getCurrentSession());
+    myBufferFrame.getContentPane().add(debugView.getComponent());
     myBufferFrame.pack();
     myBufferFrame.setLocationByPlatform(true);
     myBufferFrame.setVisible(true);
-    myBufferFrame.setSize(800, 600);
+    myBufferFrame.setSize(1600, 800);
 
+    closeOnEscape(myBufferFrame);
     myBufferFrame.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
     myBufferFrame.addWindowListener(new WindowAdapter() {
       @Override
       public void windowClosed(final WindowEvent e) {
         myBufferFrame = null;
+        debugView.stop();
+      }
+    });
+  }
+
+  private void closeOnEscape(JFrame frame) {
+    frame.getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(
+      KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "Cancel");
+    frame.getRootPane().getActionMap().put("Cancel", new AbstractAction() {
+      public void actionPerformed(ActionEvent e) {
+        frame.dispose();
       }
     });
   }

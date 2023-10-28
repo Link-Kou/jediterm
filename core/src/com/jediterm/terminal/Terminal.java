@@ -5,12 +5,13 @@ import com.jediterm.core.util.TermSize;
 import com.jediterm.terminal.emulator.mouse.MouseFormat;
 import com.jediterm.terminal.emulator.mouse.MouseMode;
 import com.jediterm.terminal.model.StyleState;
+import com.jediterm.terminal.model.TerminalApplicationTitleListener;
+import com.jediterm.terminal.model.TerminalResizeListener;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.UnsupportedEncodingException;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 
 /**
  * Executes terminal commands interpreted by {@link com.jediterm.terminal.emulator.Emulator}, receives text
@@ -19,8 +20,6 @@ import java.util.concurrent.CompletableFuture;
  */
 public interface Terminal {
   void resize(@NotNull TermSize newTermSize, @NotNull RequestOrigin origin);
-
-  void resize(@NotNull TermSize newTermSize, @NotNull RequestOrigin origin, @NotNull CompletableFuture<?> promptUpdated);
 
   void beep();
 
@@ -58,7 +57,7 @@ public interface Terminal {
 
   void restoreCursor();
 
-  void reset();
+  void reset(boolean clearScrollBackBuffer);
 
   void characterAttributes(TextStyle textStyle);
 
@@ -84,7 +83,7 @@ public interface Terminal {
 
   void cursorBackward(int dX);
 
-  void cursorShape(CursorShape shape);
+  void cursorShape(@NotNull CursorShape shape);
 
   void eraseInLine(int arg);
 
@@ -106,7 +105,7 @@ public interface Terminal {
 
   void singleShiftSelect(int num);
 
-  void setWindowTitle(String name);
+  void setWindowTitle(@NotNull String name);
 
   void saveWindowTitleOnStack();
 
@@ -167,6 +166,14 @@ public interface Terminal {
   @Nullable Color getWindowForeground();
 
   @Nullable Color getWindowBackground();
+
+  default void addApplicationTitleListener(@NotNull TerminalApplicationTitleListener listener) {}
+
+  default void removeApplicationTitleListener(@NotNull TerminalApplicationTitleListener listener) {}
+
+  default void addResizeListener(@NotNull TerminalResizeListener listener) {}
+
+  default void removeResizeListener(@NotNull TerminalResizeListener listener) {}
 
   default void addCustomCommandListener(@NotNull TerminalCustomCommandListener listener) {}
 
